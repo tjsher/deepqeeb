@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import FileExplorer from './FileExplorer';
 import ChatPanel from './ChatPanel';
 import FileEditor from './FileEditor';
 import ConversationList from './ConversationList';
+import GamePreview from './GamePreview';
+import { createClient } from '@/lib/supabase';
+import type { Conversation } from '@/types/database';
 
 interface IDEProps {
   userId: string;
@@ -12,17 +15,40 @@ interface IDEProps {
 
 export default function IDE({ userId }: IDEProps) {
   // 三栏宽度状态
-  const [leftWidth, setLeftWidth] = useState(250);      // 文件目录
-  const [middleWidth, setMiddleWidth] = useState(400);  // 文件编辑器
-  const [rightWidth, setRightWidth] = useState(500);    // 对话框
+  const [leftWidth, setLeftWidth] = useState(250);
+  const [middleWidth, setMiddleWidth] = useState(400);
   
   // 显示状态
   const [showEditor, setShowEditor] = useState(false);
   const [activeTab, setActiveTab] = useState<'files' | 'conversations'>('files');
+  const [showGamePreview, setShowGamePreview] = useState(true);
   
   // 当前选中
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+
+  const supabase = createClient();
+
+  // 加载当前对话信息
+  useEffect(() => {
+    if (!activeConversationId) {
+      setActiveConversation(null);
+      return;
+    }
+
+    const loadConversation = async () => {
+      const { data } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('id', activeConversationId)
+        .single();
+      
+      setActiveConversation(data);
+    };
+
+    loadConversation();
+  }, [activeConversationId]);
 
   // 拖拽调整宽度
   const handleDragLeft = useCallback((e: React.MouseEvent) => {
@@ -69,9 +95,11 @@ export default function IDE({ userId }: IDEProps) {
 
   // 创建新对话
   const handleNewConversation = () => {
-    // TODO: 创建新对话并跳转到对话页面
     console.log('创建新对话');
   };
+
+  // 是否是游戏类型的对话
+  const isGameConversation = activeConversation?.type === 'game';
 
   return (
     <div className="flex h-full bg-gray-100">
@@ -163,27 +191,57 @@ export default function IDE({ userId }: IDEProps) {
         </>
       )}
 
-      {/* 右侧：对话框 */}
-      <div className="flex-1 flex flex-col bg-white min-w-[400px]">
-        {activeConversationId ? (
-          <ChatPanel 
-            conversationId={activeConversationId}
-            userId={userId}
-            onClose={() => setActiveConversationId(null)}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            <div className="text-center">
-              <p className="text-lg mb-2">选择一个对话开始</p>
-              <p className="text-sm">或创建新对话</p>
-              <button
-                onClick={handleNewConversation}
-                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                + 新对话
-              </button>
+      {/* 右侧区域：对话框 + 游戏预览 */}
+      <div className="flex-1 flex flex-col min-w-[400px]">
+        {/* 对话框 */}
+        <div className={`${isGameConversation && showGamePreview ? 'h-1/2' : 'flex-1'} flex flex-col bg-white`}>
+          {activeConversationId ? (
+            <ChatPanel 
+              conversationId={activeConversationId}
+              userId={userId}
+              onClose={() => setActiveConversationId(null)}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              <div className="text-center">
+                <p className="text-lg mb-2">选择一个对话开始</p>
+                <p className="text-sm">或创建新对话</p>
+                <button
+                  onClick={handleNewConversation}
+                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  + 新对话
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+
+        {/* 游戏预览面板（仅游戏类型对话显示） */}
+        {isGameConversation && activeConversationId && (
+          <>
+            {/* 折叠按钮 */}
+            <button
+              onClick={() => setShowGamePreview(!showGamePreview)}
+              className="h-8 bg-gray-100 border-t border-gray-200 flex items-center justify-center hover:bg-gray-200 transition-colors"
+            >
+              <span className="text-xs text-gray-600 flex items-center gap-1">
+                {showGamePreview ? '▼' : '▶'} 
+                游戏预览
+                {showGamePreview ? '(点击折叠)' : '(点击展开)'}
+              </span>
+            </button>
+            
+            {/* 预览内容 */}
+            {showGamePreview && (
+              <div className="h-1/2 border-t border-gray-200">
+                <GamePreview 
+                  conversationId={activeConversationId}
+                  userId={userId}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
