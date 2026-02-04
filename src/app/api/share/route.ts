@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
+import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { customAlphabet } from 'nanoid';
 
 // 生成短 ID（只使用小写字母和数字，避免歧义字符）
@@ -8,29 +7,15 @@ const nanoid = customAlphabet('23456789abcdefghijkmnpqrstuvwxyz', 8);
 
 export async function POST(req: Request) {
   try {
-    const cookieStore = cookies();
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        auth: {
-          persistSession: false,
-        },
-        global: {
-          headers: {
-            cookie: cookieStore.toString(),
-          },
-        },
-      }
-    );
+    const supabase = await createClient();
 
     // 验证用户
     const { data: { session } } = await supabase.auth.getSession();
-    
+
     // 开发模式跳过验证
     const isDev = process.env.NODE_ENV === 'development';
     const userId = isDev ? 'mock-user-001' : session?.user?.id;
-    
+
     if (!userId) {
       return NextResponse.json({ error: '未登录' }, { status: 401 });
     }
@@ -89,7 +74,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: '创建分享链接失败' }, { status: 500 });
     }
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       shareId,
       url: `${process.env.NEXT_PUBLIC_APP_URL}/play/${shareId}`,
     });

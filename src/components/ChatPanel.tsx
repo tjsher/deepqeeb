@@ -16,6 +16,8 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [agentMode, setAgentMode] = useState<'script' | 'game'>('script');
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const supabase = createClient();
@@ -23,6 +25,7 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
   // 加载对话信息
   useEffect(() => {
     const loadConversation = async () => {
+      if (!conversationId || conversationId === 'undefined') return;
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
@@ -35,15 +38,22 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
       }
 
       setConversation(data);
-      
+      if (data.last_agent_mode) {
+        setAgentMode(data.last_agent_mode);
+      }
+
       // 加载历史消息
-      const { data: msgData } = await supabase
+      const { data: msgData, error: msgError } = await supabase
         .from('messages')
         .select('*')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true });
-      
-      setMessages(msgData || []);
+
+      if (msgError) {
+        console.error('加载消息失败:', msgError);
+      } else {
+        setMessages(msgData || []);
+      }
       setLoading(false);
     };
 
@@ -55,10 +65,20 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // 更新模式
+  const handleModeChange = async (mode: 'script' | 'game') => {
+    setAgentMode(mode);
+    // Update DB
+    await supabase
+      .from('conversations')
+      .update({ last_agent_mode: mode })
+      .eq('id', conversationId);
+  };
+
   // 发送消息
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
-    
+
     if (!input.trim() || isStreaming) return;
 
     const userMessage = input.trim();
@@ -91,17 +111,30 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
       chatMessages.push({ role: 'user', content: userMessage });
 
       // 调用 AI API
+      console.log('Sending request to /api/chat...', {
+        conversation_id: conversationId,
+        script_id: conversation?.script_id,
+        agent_mode: agentMode,
+        messages: chatMessages
+      });
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversation_id: conversationId,
           messages: chatMessages,
+          script_id: conversation?.script_id, // Pass Script ID
+          agent_mode: agentMode // Pass current mode
         }),
       });
 
+      console.log('API Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error('请求失败');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API Error details:', errorData);
+        throw new Error(`请求失败: ${response.status} ${errorData.error || ''}`);
       }
 
       // 读取流式响应
@@ -110,7 +143,7 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
       let assistantContent = '';
 
       if (reader) {
-        // 添加临时的助手消息
+        console.log('Starting to read stream...');
         const tempAssistantMsg: Message = {
           id: (Date.now() + 1).toString(),
           conversation_id: conversationId,
@@ -122,25 +155,29 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            console.log('Stream finished.');
+            break;
+          }
 
           const chunk = decoder.decode(value, { stream: true });
+          console.log('Received chunk:', chunk);
           assistantContent += chunk;
 
-          // 更新助手消息内容
-          setMessages(prev => 
-            prev.map(m => 
-              m.id === tempAssistantMsg.id 
-                ? { ...m, content: assistantContent } 
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === tempAssistantMsg.id
+                ? { ...m, content: assistantContent }
                 : m
             )
           );
         }
+      } else {
+        console.warn('No reader found in response body');
       }
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      // 显示错误消息
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         conversation_id: conversationId,
@@ -151,7 +188,7 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
     } finally {
       setIsStreaming(false);
     }
-  }, [input, isStreaming, conversationId, messages]);
+  }, [input, isStreaming, conversationId, messages, conversation, agentMode]);
 
   if (loading) {
     return (
@@ -165,13 +202,41 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
     <div className="h-full flex flex-col">
       {/* 头部 */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{conversation?.type === 'script' ? '📝' : '🎮'}</span>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-500 hover:bg-gray-200 rounded"
+            title="返回列表"
+          >
+            ←
+          </button>
+
+          {/* Agent Mode Toggle */}
+          <div className="flex bg-gray-200 rounded-lg p-1">
+            <button
+              onClick={() => handleModeChange('script')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${agentMode === 'script'
+                ? 'bg-white text-blue-600 shadow-sm font-medium'
+                : 'text-gray-600 hover:text-gray-900'
+                }`}
+            >
+              📝 剧本 Agent
+            </button>
+            <button
+              onClick={() => handleModeChange('game')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${agentMode === 'game'
+                ? 'bg-white text-purple-600 shadow-sm font-medium'
+                : 'text-gray-600 hover:text-gray-900'
+                }`}
+            >
+              🎮 游戏生成 Agent
+            </button>
+          </div>
+
+          <div className="border-l border-gray-300 h-6 mx-1"></div>
+
           <div>
-            <h3 className="font-medium text-gray-900">{conversation?.title}</h3>
-            <p className="text-xs text-gray-500">
-              {conversation?.type === 'script' ? '剧本创作模式' : '游戏生成模式'}
-            </p>
+            <h3 className="font-medium text-gray-900 truncate max-w-[200px]">{conversation?.title}</h3>
           </div>
         </div>
         <button
@@ -188,9 +253,7 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
           <div className="text-center text-gray-400 py-8">
             <p className="text-lg mb-2">开始对话</p>
             <p className="text-sm">
-              {conversation?.type === 'script'
-                ? '描述你想创作的故事...'
-                : '告诉我如何调整游戏...'}
+              选择上方 Agent 模式，开始创作或生成游戏。
             </p>
           </div>
         )}
@@ -201,11 +264,10 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}
+              className={`max-w-[80%] rounded-lg px-4 py-2 ${message.role === 'user'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-900'
+                }`}
             >
               <div className="text-sm whitespace-pre-wrap">{message.content}</div>
               {message.role === 'assistant' && isStreaming && index === messages.length - 1 && (
@@ -225,9 +287,9 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
-              conversation?.type === 'script'
-                ? '输入消息让 AI 帮你写剧本...'
-                : '输入消息调整游戏...'
+              agentMode === 'script'
+                ? '输入内容，Agent 将帮你完善剧本...'
+                : '输入指令，Agent 将帮你生成/修改游戏代码...'
             }
             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isStreaming}
@@ -235,29 +297,12 @@ export default function ChatPanel({ conversationId, userId, onClose }: ChatPanel
           <button
             type="submit"
             disabled={isStreaming || !input.trim()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`px-6 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${agentMode === 'script' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
+              }`}
           >
             {isStreaming ? '发送中...' : '发送'}
           </button>
         </form>
-        
-        {/* 快捷操作 */}
-        {conversation?.type === 'script' && (
-          <div className="flex gap-2 mt-2">
-            <button
-              onClick={() => setInput('帮我生成游戏')}
-              className="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
-            >
-              生成游戏
-            </button>
-            <button 
-              onClick={() => setInput('整理当前剧本')}
-              className="text-xs px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-            >
-              整理剧本
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

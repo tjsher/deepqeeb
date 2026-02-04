@@ -23,30 +23,30 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
-    
+
     setLoading(true);
     setMessage('');
 
     try {
       const { error } = isSignUp
         ? await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-              emailRedirectTo: `${window.location.origin}/auth/callback`,
-            },
-          })
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          },
+        })
         : await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
+          email,
+          password,
+        });
 
       if (error) throw error;
 
       if (isSignUp) {
         setMessage('注册成功！请检查邮箱验证链接。');
       } else {
-        window.location.href = '/workspace';
+        window.location.href = '/dashboard';
       }
     } catch (error: any) {
       setMessage(error.message || '操作失败');
@@ -57,7 +57,7 @@ export default function LoginPage() {
 
   const handleOAuth = async (provider: 'github' | 'google') => {
     if (!supabase) return;
-    
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {

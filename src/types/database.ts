@@ -9,32 +9,39 @@ export interface User {
   updated_at: string;
 }
 
-export interface File {
+export interface Script {
   id: string;
   user_id: string;
-  path: string;              // 文件路径，如 "/剧本/第一章.md"
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface File {
+  id: string;
+  script_id: string;         // 关联到剧本/项目
+  path: string;              // 文件路径，如 "/剧本/第一章.md", "/src/game.js"
   content: string;           // 文件内容
-  type: 'script' | 'config' | 'asset';
+  pending_content?: string;  // 待确认的修改内容 (用于 Diff)
+  type: 'file' | 'folder';   // 基础文件类型
+  mime_type?: string;        // 具体文件类型，如 'text/markdown', 'application/javascript'
   created_at: string;
   updated_at: string;
 }
 
 export interface Conversation {
   id: string;
-  user_id: string;
-  type: 'script' | 'game';
+  script_id: string;         // 关联到剧本/项目
   title: string;
   description?: string;
-  
-  // 关联的文件 (script 类型时有效)
+
+  // 当前/最后使用的 Agent 模式
+  last_agent_mode?: 'script' | 'game';
+
+  // 关联的文件 (可选)
   related_files?: string[];  // file_id 数组
-  
-  // 关联的游戏版本 (game 类型时有效)
-  game_versions?: string[];  // game_id 数组
-  
-  // 关联的源剧本对话 (game 类型时有效)
-  source_conversation_id?: string;
-  
+
   status: 'active' | 'archived';
   created_at: string;
   updated_at: string;
@@ -45,28 +52,28 @@ export interface Message {
   conversation_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  
+
   // 元数据 - 用于标记特殊消息和状态更新
   metadata?: {
     // 消息类型
     type?: 'file_created' | 'file_updated' | 'file_deleted' | 'game_generated' | 'state_update' | 'normal';
-    
+
     // 关联的文件
     file_id?: string;
     file_path?: string;
-    
+
     // 关联的游戏
     game_id?: string;
     game_version?: number;
-    
+
     // 状态更新 (Agent C 输出)
     state_update?: Record<string, any>;
-    
+
     // 角色信息 (Agent C 输出)
     speaker?: string;
     emotion?: string;
   };
-  
+
   created_at: string;
 }
 
@@ -76,7 +83,7 @@ export interface GameVersion {
   conversation_id: string;   // 关联的游戏对话
   version: number;
   code: string;              // 完整 HTML/ESM 代码
-  
+
   // Agent C 运行时配置
   runtime_config?: {
     // Agent C 的系统提示词模板
@@ -86,7 +93,7 @@ export interface GameVersion {
     // 支持的 functions/tools
     available_tools?: string[];
   };
-  
+
   // 生成时的剧本快照
   script_snapshot: string;
   description?: string;
@@ -110,14 +117,14 @@ export interface GameSave {
   game_id: string;
   user_id: string;           // 玩家ID
   slot_number: number;       // 1-3 (付费可解锁更多)
-  
+
   // 存档内容 - 从第几条消息开始
   // 如果为 0，表示从头开始
   message_offset: number;
-  
+
   // 当前已应用的状态 (缓存，用于快速加载)
   cached_state?: Record<string, any>;
-  
+
   // 存档元数据
   meta: {
     name?: string;           // 玩家自定义存档名
@@ -125,7 +132,7 @@ export interface GameSave {
     play_time: number;       // 游戏时长(秒)
     progress_hint?: string;  // 进度提示 (如 "第一章 - 表白成功")
   };
-  
+
   created_at: string;
   updated_at: string;
 }

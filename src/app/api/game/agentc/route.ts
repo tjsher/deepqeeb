@@ -3,7 +3,7 @@ import { streamText } from 'ai';
 import { NextResponse } from 'next/server';
 
 // Agent C 基础系统提示词
-const AGENT_C_BASE_PROMPT = `你是 DeepQeeb 游戏主持人 Agent C，负责驱动文字冒险游戏。
+const AGENT_C_BASE_PROMPT = `你是 DeepQeeb 的【游戏主持人】，负责实时驱动文字冒险游戏的剧情发展。
 
 ## 核心职责
 1. 根据玩家输入推进剧情

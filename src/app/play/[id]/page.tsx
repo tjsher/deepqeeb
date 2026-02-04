@@ -3,12 +3,13 @@ import { notFound } from 'next/navigation';
 import GamePlayer from '@/components/GamePlayer';
 
 interface PlayPageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default async function PlayPage({ params }: PlayPageProps) {
+  const { id } = await params;
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -18,7 +19,7 @@ export default async function PlayPage({ params }: PlayPageProps) {
   const { data: share, error: shareError } = await supabase
     .from('shares')
     .select('*, games(*)')
-    .eq('id', params.id)
+    .eq('id', id)
     .single();
 
   if (shareError || !share) {
@@ -32,7 +33,7 @@ export default async function PlayPage({ params }: PlayPageProps) {
       access_count: (share.access_count || 0) + 1,
       last_accessed: new Date().toISOString(),
     })
-    .eq('id', params.id);
+    .eq('id', id);
 
   return (
     <div className="h-screen flex flex-col bg-gray-900">
@@ -44,8 +45,8 @@ export default async function PlayPage({ params }: PlayPageProps) {
           <span className="text-gray-300 text-sm">{share.games?.description || '未命名游戏'}</span>
         </div>
         <div className="flex items-center gap-4">
-          <a 
-            href="/workspace" 
+          <a
+            href="/workspace"
             className="text-sm text-gray-400 hover:text-white"
           >
             创建自己的游戏
@@ -55,7 +56,7 @@ export default async function PlayPage({ params }: PlayPageProps) {
 
       {/* 游戏区域 */}
       <main className="flex-1 overflow-hidden">
-        <GamePlayer 
+        <GamePlayer
           gameId={share.games.id}
           gameCode={share.games.code}
           runtimeConfig={share.games.runtime_config}

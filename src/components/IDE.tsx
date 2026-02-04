@@ -11,18 +11,18 @@ import type { Conversation } from '@/types/database';
 
 interface IDEProps {
   userId: string;
+  scriptId: string;
 }
 
-export default function IDE({ userId }: IDEProps) {
+export default function IDE({ userId, scriptId }: IDEProps) {
   // 三栏宽度状态
   const [leftWidth, setLeftWidth] = useState(250);
   const [middleWidth, setMiddleWidth] = useState(400);
-  
+
   // 显示状态
   const [showEditor, setShowEditor] = useState(false);
-  const [activeTab, setActiveTab] = useState<'files' | 'conversations'>('files');
   const [showGamePreview, setShowGamePreview] = useState(true);
-  
+
   // 当前选中
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -43,7 +43,7 @@ export default function IDE({ userId }: IDEProps) {
         .select('*')
         .eq('id', activeConversationId)
         .single();
-      
+
       setActiveConversation(data);
     };
 
@@ -54,17 +54,17 @@ export default function IDE({ userId }: IDEProps) {
   const handleDragLeft = useCallback((e: React.MouseEvent) => {
     const startX = e.clientX;
     const startWidth = leftWidth;
-    
+
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startX;
       setLeftWidth(Math.max(200, Math.min(400, startWidth + delta)));
     };
-    
+
     const handleMouseUp = () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-    
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }, [leftWidth]);
@@ -72,17 +72,17 @@ export default function IDE({ userId }: IDEProps) {
   const handleDragMiddle = useCallback((e: React.MouseEvent) => {
     const startX = e.clientX;
     const startWidth = middleWidth;
-    
+
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startX;
       setMiddleWidth(Math.max(300, Math.min(600, startWidth + delta)));
     };
-    
+
     const handleMouseUp = () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-    
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }, [middleWidth]);
@@ -98,56 +98,26 @@ export default function IDE({ userId }: IDEProps) {
     console.log('创建新对话');
   };
 
-  // 是否是游戏类型的对话
-  const isGameConversation = activeConversation?.type === 'game';
+  // Check if current conversation includes game elements (simplified logic for now)
+  const isGameConversation = activeConversation?.last_agent_mode === 'game';
 
   return (
     <div className="flex h-full bg-gray-100">
-      {/* 左侧：文件目录 / 对话列表 */}
-      <div 
+      {/* 左侧：文件目录 */}
+      <div
         className="flex flex-col bg-white border-r border-gray-200"
         style={{ width: leftWidth }}
       >
-        {/* 标签切换 */}
-        <div className="flex border-b border-gray-200">
-          <button
-            className={`flex-1 py-2 px-4 text-sm font-medium ${
-              activeTab === 'files' 
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50' 
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-            onClick={() => setActiveTab('files')}
-          >
-            📁 文件
-          </button>
-          <button
-            className={`flex-1 py-2 px-4 text-sm font-medium ${
-              activeTab === 'conversations' 
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50' 
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-            onClick={() => setActiveTab('conversations')}
-          >
-            💬 对话
-          </button>
+        <div className="flex items-center px-4 py-3 border-b border-gray-200">
+          <span className="font-medium text-gray-700">📁 剧本文件</span>
         </div>
 
-        {/* 内容区 */}
         <div className="flex-1 overflow-auto">
-          {activeTab === 'files' ? (
-            <FileExplorer 
-              userId={userId}
-              onFileSelect={handleFileSelect}
-              selectedFile={selectedFile}
-            />
-          ) : (
-            <ConversationList
-              userId={userId}
-              activeConversationId={activeConversationId}
-              onSelectConversation={setActiveConversationId}
-              onNewConversation={handleNewConversation}
-            />
-          )}
+          <FileExplorer
+            scriptId={scriptId}
+            onFileSelect={handleFileSelect}
+            selectedFile={selectedFile}
+          />
         </div>
       </div>
 
@@ -160,7 +130,7 @@ export default function IDE({ userId }: IDEProps) {
       {/* 中间：文件编辑器 (可收起) */}
       {showEditor && (
         <>
-          <div 
+          <div
             className="flex flex-col bg-white border-r border-gray-200"
             style={{ width: middleWidth }}
           >
@@ -176,9 +146,10 @@ export default function IDE({ userId }: IDEProps) {
               </button>
             </div>
             <div className="flex-1 overflow-auto">
-              <FileEditor 
+              {/* Note: FileEditor might need to handle per-script files, passing userId for now but eventually scriptId should be primary context */}
+              <FileEditor
                 filePath={selectedFile}
-                userId={userId}
+                scriptId={scriptId}
               />
             </div>
           </div>
@@ -191,33 +162,34 @@ export default function IDE({ userId }: IDEProps) {
         </>
       )}
 
-      {/* 右侧区域：对话框 + 游戏预览 */}
+      {/* 右侧区域：对话列表 / 对话详情 + 游戏预览 */}
       <div className="flex-1 flex flex-col min-w-[400px]">
-        {/* 对话框 */}
+        {/* 对话区域 */}
         <div className={`${isGameConversation && showGamePreview ? 'h-1/2' : 'flex-1'} flex flex-col bg-white`}>
           {activeConversationId ? (
-            <ChatPanel 
+            <ChatPanel
               conversationId={activeConversationId}
               userId={userId}
               onClose={() => setActiveConversationId(null)}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <p className="text-lg mb-2">选择一个对话开始</p>
-                <p className="text-sm">或创建新对话</p>
-                <button
-                  onClick={handleNewConversation}
-                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  + 新对话
-                </button>
+            <div className="flex-1 flex flex-col">
+              <div className="flex items-center px-4 py-3 border-b border-gray-200 bg-gray-50">
+                <span className="font-medium text-gray-700">💬 对话历史</span>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <ConversationList
+                  scriptId={scriptId}
+                  activeConversationId={activeConversationId}
+                  onSelectConversation={setActiveConversationId}
+                  onNewConversation={handleNewConversation}
+                />
               </div>
             </div>
           )}
         </div>
 
-        {/* 游戏预览面板（仅游戏类型对话显示） */}
+        {/* 游戏预览面板（仅在有活跃对话且需要时显示，这里简单判断 game 模式） */}
         {isGameConversation && activeConversationId && (
           <>
             {/* 折叠按钮 */}
@@ -226,16 +198,16 @@ export default function IDE({ userId }: IDEProps) {
               className="h-8 bg-gray-100 border-t border-gray-200 flex items-center justify-center hover:bg-gray-200 transition-colors"
             >
               <span className="text-xs text-gray-600 flex items-center gap-1">
-                {showGamePreview ? '▼' : '▶'} 
+                {showGamePreview ? '▼' : '▶'}
                 游戏预览
                 {showGamePreview ? '(点击折叠)' : '(点击展开)'}
               </span>
             </button>
-            
+
             {/* 预览内容 */}
             {showGamePreview && (
               <div className="h-1/2 border-t border-gray-200">
-                <GamePreview 
+                <GamePreview
                   conversationId={activeConversationId}
                   userId={userId}
                 />
