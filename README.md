@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DeepQeeb
 
-## Getting Started
+基于 Next.js 15 + AI SDK 的对话式游戏开发平台。
 
-First, run the development server:
+## 技术栈
+
+- **框架**: Next.js 15 (App Router) + React 19 + TypeScript
+- **样式**: Tailwind CSS v4
+- **AI**: Vercel AI SDK + OpenRouter (Claude/Gemini)
+- **数据库**: Supabase
+- **动画**: Framer Motion
+- **部署**: Vercel
+
+## 本地开发
 
 ```bash
+# 安装依赖
+npm install
+
+# 配置环境变量
+cp .env.local.example .env.local
+# 编辑 .env.local 填入你的 API Key
+
+# 启动开发服务器
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+打开 [http://localhost:3000](http://localhost:3000) 访问。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 部署到 Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 方式一：CLI 部署
 
-## Learn More
+```bash
+# 安装 Vercel CLI
+npm i -g vercel
 
-To learn more about Next.js, take a look at the following resources:
+# 登录
+vercel login
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# 部署
+vercel --prod
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 方式二：Git 集成
 
-## Deploy on Vercel
+将代码推送到 GitHub/GitLab，在 [Vercel Dashboard](https://vercel.com/dashboard) 导入仓库即可实现自动部署。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 环境变量
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+在 Vercel Dashboard 的 Project Settings → Environment Variables 中设置：
+
+| 变量名 | 说明 |
+|--------|------|
+| `OPENROUTER_API_KEY` | OpenRouter API Key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase 项目 URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase 匿名 Key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服务角色 Key |
+
+## 项目结构
+
+```
+app/
+├── api/          # API 路由
+├── page.tsx      # 主页面
+└── layout.tsx    # 根布局
+public/           # 静态资源
+```
+
+## 了解更多
+
+- [Next.js 文档](https://nextjs.org/docs)
+- [Vercel AI SDK](https://sdk.vercel.ai/docs)
+- [OpenRouter](https://openrouter.ai/docs)
