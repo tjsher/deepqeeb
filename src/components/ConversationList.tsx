@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase';
 import type { Conversation } from '@/types/database';
 
 interface ConversationListProps {
@@ -9,6 +8,7 @@ interface ConversationListProps {
   activeConversationId: string | null;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
+  onDeleteConversation?: (id: string) => void;
 }
 
 export default function ConversationList({
@@ -16,54 +16,82 @@ export default function ConversationList({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
 }: ConversationListProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const supabase = createClient();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadConversations();
+
+    // 定期刷新（每 5 秒）
+    const interval = setInterval(() => {
+      loadConversations();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, [scriptId]);
 
   const loadConversations = async () => {
     if (!scriptId || scriptId === 'undefined') return;
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('script_id', scriptId)
-      .order('updated_at', { ascending: false });
 
-    if (error) {
+    try {
+      const res = await fetch(`/api/scripts/${scriptId}/conversations`);
+      if (!res.ok) throw new Error('Failed to load conversations');
+      const data = await res.json();
+      setConversations(data || []);
+    } catch (error) {
       console.error('加载对话失败:', error);
-      return;
     }
 
-    setConversations(data || []);
     setLoading(false);
   };
 
   const createNewConversation = async () => {
     const title = '新对话';
 
-    const { data, error } = await supabase
-      .from('conversations')
-      .insert({
-        script_id: scriptId,
-        title,
-        status: 'active',
-        last_agent_mode: 'script' // Default to script mode
-      })
-      .select()
-      .single();
+    try {
+      const res = await fetch(`/api/scripts/${scriptId}/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, agentMode: 'script' }),
+      });
 
-    if (error) {
+      if (!res.ok) throw new Error('Failed to create conversation');
+
+      const data = await res.json();
+      setConversations([data, ...conversations]);
+      onSelectConversation(data.id);
+    } catch (error) {
       console.error('创建对话失败:', error);
-      return;
     }
+  };
 
-    setConversations([data, ...conversations]);
-    onSelectConversation(data.id);
+  const deleteConversation = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('确定要删除这个对话吗？此操作不可恢复。')) return;
+
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/conversations/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        alert('删除失败: ' + error.message);
+        return;
+      }
+
+      // 更新本地状态
+      setConversations(prev => prev.filter(c => c.id !== id));
+      onDeleteConversation?.(id);
+    } catch (error) {
+      console.error('删除对话出错:', error);
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const formatTime = (date: string) => {
@@ -105,7 +133,7 @@ export default function ConversationList({
             <div
               key={conv.id}
               onClick={() => onSelectConversation(conv.id)}
-              className={`px-4 py-3 cursor-pointer hover:bg-gray-100 ${activeConversationId === conv.id ? 'bg-blue-50 border-r-2 border-blue-600' : ''
+              className={`group px-4 py-3 cursor-pointer hover:bg-gray-100 ${activeConversationId === conv.id ? 'bg-blue-50 border-r-2 border-blue-600' : ''
                 }`}
             >
               <div className="flex items-center gap-2">
@@ -120,6 +148,20 @@ export default function ConversationList({
                     {formatTime(conv.updated_at)}
                   </p>
                 </div>
+                <button
+                  onClick={(e) => deleteConversation(e, conv.id)}
+                  disabled={deletingId === conv.id}
+                  className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-all"
+                  title="删除对话"
+                >
+                  {deletingId === conv.id ? (
+                    <span className="text-xs">...</span>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  )}
+                </button>
               </div>
             </div>
           ))

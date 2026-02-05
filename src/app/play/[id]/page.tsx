@@ -1,67 +1,62 @@
-import { createClient } from '@supabase/supabase-js';
-import { notFound } from 'next/navigation';
-import GamePlayer from '@/components/GamePlayer';
+'use client';
+
+import { useState, useEffect } from 'react';
 
 interface PlayPageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
 }
 
-export default async function PlayPage({ params }: PlayPageProps) {
-  const { id } = await params;
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+export default function PlayPage({ params }: PlayPageProps) {
+  const [shareId, setShareId] = useState<string>('');
+  const [game, setGame] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // 获取分享链接对应的游戏
-  const { data: share, error: shareError } = await supabase
-    .from('shares')
-    .select('*, games(*)')
-    .eq('id', id)
-    .single();
+  useEffect(() => {
+    params.then(p => {
+      setShareId(p.id);
+      loadGame(p.id);
+    });
+  }, [params]);
 
-  if (shareError || !share) {
-    notFound();
+  const loadGame = async (id: string) => {
+    try {
+      const res = await fetch(`/api/share/${id}`);
+      if (!res.ok) throw new Error('Game not found');
+      const data = await res.json();
+      setGame(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p>加载中...</p>
+      </div>
+    );
   }
 
-  // 更新访问次数
-  await supabase
-    .from('shares')
-    .update({
-      access_count: (share.access_count || 0) + 1,
-      last_accessed: new Date().toISOString(),
-    })
-    .eq('id', id);
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-red-500">
+        <p>错误: {error}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900">
-      {/* 顶部栏 */}
-      <header className="h-12 bg-gray-800 text-white flex items-center px-4 justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="font-bold">DeepQeeb</h1>
-          <span className="text-gray-400">|</span>
-          <span className="text-gray-300 text-sm">{share.games?.description || '未命名游戏'}</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <a
-            href="/workspace"
-            className="text-sm text-gray-400 hover:text-white"
-          >
-            创建自己的游戏
-          </a>
-        </div>
-      </header>
-
-      {/* 游戏区域 */}
-      <main className="flex-1 overflow-hidden">
-        <GamePlayer
-          gameId={share.games.id}
-          gameCode={share.games.code}
-          runtimeConfig={share.games.runtime_config}
-        />
-      </main>
+    <div className="min-h-screen bg-gray-900 text-white">
+      <div className="container mx-auto p-4">
+        <h1 className="text-2xl font-bold mb-4">游戏</h1>
+        <p>Share ID: {shareId}</p>
+        <pre className="mt-4 p-4 bg-gray-800 rounded overflow-auto">
+          {JSON.stringify(game, null, 2)}
+        </pre>
+      </div>
     </div>
   );
 }

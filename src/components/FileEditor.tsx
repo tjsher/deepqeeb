@@ -1,8 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase';
-import debounce from 'lodash/debounce';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface FileEditorProps {
   filePath: string | null;
@@ -16,7 +14,14 @@ export default function FileEditor({ filePath, scriptId }: FileEditorProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const supabase = createClient();
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 辅助函数：生成文件 API URL
+  const getFileApiUrl = (path: string) => {
+    const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+    const encodedPath = cleanPath.split('/').map(encodeURIComponent).join('/');
+    return `/api/scripts/${scriptId}/files/${encodedPath}`;
+  };
 
   // 加载文件内容
   useEffect(() => {
@@ -31,90 +36,116 @@ export default function FileEditor({ filePath, scriptId }: FileEditorProps) {
       setLoading(true);
       setError('');
 
-      const { data, error } = await supabase
-        .from('files')
-        .select('content, pending_content')
-        .eq('script_id', scriptId)
-        .eq('path', filePath)
-        .single();
-
-      if (error) {
+      try {
+        const res = await fetch(getFileApiUrl(filePath));
+        if (!res.ok) {
+          if (res.status === 404) {
+            setContent('');
+            setPendingContent(null);
+            setError('文件不存在或已被删除');
+          } else {
+            throw new Error('Failed to load file');
+          }
+        } else {
+          const data = await res.json();
+          setContent(data.content || '');
+          setPendingContent(data.pending_content || null);
+          setError('');
+        }
+      } catch (err: any) {
         setError('加载文件失败');
-        console.error(error);
-      } else {
-        setContent(data?.content || '');
-        setPendingContent(data?.pending_content || null);
+        console.error('Load file error:', err);
       }
 
       setLoading(false);
     };
 
     loadFile();
+
+    // 清理保存定时器
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, [filePath, scriptId]);
 
   // 自动保存
-  const saveFile = useCallback(
-    debounce(async (newContent: string) => {
-      if (!filePath) return;
-      if (pendingContent) return; // Don't auto-save while diffing
+  const saveFile = useCallback((newContent: string) => {
+    if (!filePath) return;
+    if (pendingContent) return; // Don't auto-save while diffing
 
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // 设置新的定时器
+    saveTimeoutRef.current = setTimeout(async () => {
       setSaving(true);
 
-      const { error } = await supabase
-        .from('files')
-        .upsert({
-          script_id: scriptId,
-          path: filePath,
-          content: newContent,
-          name: filePath.split('/').pop() || 'untitled',
-          type: 'file',
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'script_id, path' });
+      try {
+        const res = await fetch(getFileApiUrl(filePath), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: newContent }),
+        });
 
-      if (error) {
-        console.error('保存失败:', error);
+        if (!res.ok) {
+          console.error('保存失败');
+        }
+      } catch (err) {
+        console.error('保存失败:', err);
       }
 
       setSaving(false);
-    }, 1000),
-    [filePath, scriptId, pendingContent]
-  );
+    }, 1000);
+  }, [filePath, scriptId, pendingContent]);
 
   const handleAccept = async () => {
     if (!filePath || !pendingContent) return;
 
     setSaving(true);
-    const { error } = await supabase
-      .from('files')
-      .update({
-        content: pendingContent,
-        pending_content: null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('script_id', scriptId)
-      .eq('path', filePath);
 
-    if (error) {
-      alert('接受修改失败: ' + error.message);
-    } else {
-      setContent(pendingContent);
-      setPendingContent(null);
+    try {
+      const res = await fetch(getFileApiUrl(filePath), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'accept' }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        alert('接受修改失败: ' + error.message);
+      } else {
+        setContent(pendingContent);
+        setPendingContent(null);
+      }
+    } catch (err: any) {
+      alert('接受修改失败: ' + err.message);
     }
+
     setSaving(false);
   };
 
   const handleReject = async () => {
     if (!filePath) return;
-    const { error } = await supabase
-      .from('files')
-      .update({ pending_content: null })
-      .eq('script_id', scriptId)
-      .eq('path', filePath);
 
-    if (error) {
-      alert('拒绝修改失败: ' + error.message);
-    } else {
-      setPendingContent(null);
+    try {
+      const res = await fetch(getFileApiUrl(filePath), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject' }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        alert('拒绝修改失败: ' + error.message);
+      } else {
+        setPendingContent(null);
+      }
+    } catch (err: any) {
+      alert('拒绝修改失败: ' + err.message);
     }
   };
 
@@ -136,6 +167,14 @@ export default function FileEditor({ filePath, scriptId }: FileEditorProps) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400 bg-white">
         <p>加载中...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center text-red-500 bg-white">
+        <p>{error}</p>
       </div>
     );
   }

@@ -26,6 +26,7 @@ export interface File {
   pending_content?: string;  // 待确认的修改内容 (用于 Diff)
   type: 'file' | 'folder';   // 基础文件类型
   mime_type?: string;        // 具体文件类型，如 'text/markdown', 'application/javascript'
+  is_visible?: boolean;      // 前端是否可见，默认不可见
   created_at: string;
   updated_at: string;
 }
@@ -53,10 +54,10 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
 
-  // 元数据 - 用于标记特殊消息和状态更新
+    // 元数据 - 用于标记特殊消息和状态更新
   metadata?: {
     // 消息类型
-    type?: 'file_created' | 'file_updated' | 'file_deleted' | 'game_generated' | 'state_update' | 'normal';
+    type?: 'file_created' | 'file_updated' | 'file_deleted' | 'game_generated' | 'state_update' | 'normal' | 'tool_calls';
 
     // 关联的文件
     file_id?: string;
@@ -72,6 +73,20 @@ export interface Message {
     // 角色信息 (Agent C 输出)
     speaker?: string;
     emotion?: string;
+
+    // 工具调用信息
+    tool_calls?: Array<{
+      name: string;
+      parameters: Record<string, any>;
+      result?: any;
+      status: 'pending' | 'success' | 'error';
+    }>;
+
+    // Agent 思考过程 (reasoning) - 来自大模型的思考链
+    reasoning?: string;
+
+    // Agent 模式
+    agent_mode?: 'script' | 'game';
   };
 
   created_at: string;

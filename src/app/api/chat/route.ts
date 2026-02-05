@@ -1,10 +1,13 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { tool, ToolLoopAgent, createAgentUIStreamResponse, stepCountIs } from 'ai';
-import { createClient } from '@/lib/supabase-server';
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
+import * as db from '@/lib/db';
+import { conversationBuffer } from '@/lib/buffer';
+import fs from 'fs';
+import path from 'path';
 
-export const maxDuration = 60;
+export const maxDuration = 300; // 5分钟超时
 
 // ==================== System Prompts ====================
 
@@ -29,14 +32,6 @@ const PROMPT_MAP: Record<string, string> = {
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-
-    // 1. Auth Check
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { messages, conversation_id, script_id, agent_mode } = await req.json();
 
     console.log('--- Chat Request ---');
@@ -48,15 +43,117 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing script_id' }, { status: 400 });
     }
 
+    if (!conversation_id) {
+      return NextResponse.json({ error: 'Missing conversation_id' }, { status: 400 });
+    }
+
+    // 检查是否已有正在运行的任务
+    const existingTask = conversationBuffer.getTask(conversation_id);
+    if (existingTask && existingTask.status === 'running') {
+      return NextResponse.json(
+        { error: 'A task is already running for this conversation' },
+        { status: 409 }
+      );
+    }
+
     const openrouter = createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY,
       baseURL: process.env.OPENROUTER_BASE_URL,
     });
 
+    // 构建初始消息字符串
+    const lastMessage = messages[messages.length - 1];
+    const initialMessages = buildInitialMessages(messages);
+
+    // 创建 Agent 任务到 Buffer
+    conversationBuffer.createTask(
+      conversation_id,
+      script_id,
+      agent_mode || 'script',
+      initialMessages
+    );
+
+    // 保存用户消息到数据库
+    if (lastMessage && lastMessage.role === 'user') {
+      db.createMessage(conversation_id, 'user', lastMessage.content);
+    }
+
+    // 更新对话模式
+    db.updateConversationMode(conversation_id, agent_mode || 'script');
+
+    // 启动 Agent 任务（后台运行，不阻塞响应）
+    runAgentTask({
+      conversationId: conversation_id,
+      scriptId: script_id,
+      agentMode: agent_mode || 'script',
+      messages,
+      openrouter,
+    });
+
+    // 立即返回成功响应，前端将通过 Stream API 获取输出
+    return NextResponse.json({
+      success: true,
+      message: 'Agent task started',
+      conversationId: conversation_id,
+      streamUrl: `/api/stream/${conversation_id}`,
+    });
+
+  } catch (error: any) {
+    console.error('Chat API Error:', error);
+    return NextResponse.json(
+      { error: error.message || 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * 构建初始消息字符串（用于 Buffer）
+ */
+function buildInitialMessages(messages: any[]): string {
+  return messages
+    .map((msg) => {
+      if (msg.role === 'system') {
+        return `[SYSTEM]${msg.content}[/SYSTEM]`;
+      } else if (msg.role === 'user') {
+        return `[USER]${msg.content}[/USER]`;
+      } else if (msg.role === 'assistant') {
+        if (msg.tool_calls) {
+          const toolCalls = msg.tool_calls
+            .map((tc: any) => `[TOOL]${tc.name}:${JSON.stringify(tc.parameters)}[/TOOL]`)
+            .join('');
+          return `[ASSISTANT]${msg.content || ''}[/ASSISTANT]${toolCalls}[MESSAGE_FINISHED]`;
+        }
+        return `[ASSISTANT]${msg.content}[/ASSISTANT][MESSAGE_FINISHED]`;
+      }
+      return '';
+    })
+    .join('');
+}
+
+/**
+ * 后台运行 Agent 任务
+ */
+async function runAgentTask({
+  conversationId,
+  scriptId,
+  agentMode,
+  messages,
+  openrouter,
+}: {
+  conversationId: string;
+  scriptId: string;
+  agentMode: 'script' | 'game';
+  messages: any[];
+  openrouter: any;
+}) {
+  console.log(`[Agent Task] Starting for conversation ${conversationId}`);
+
+  try {
     // 2. Define Agent
     const agent = new ToolLoopAgent({
       model: openrouter(process.env.DEFAULT_MODEL || 'anthropic/claude-3.5-sonnet'),
-      instructions: BASE_SYSTEM_PROMPT.replace('{{agent_mode}}', agent_mode) + '\n' + (PROMPT_MAP[agent_mode] || ''),
+      instructions: BASE_SYSTEM_PROMPT.replace('{{agent_mode}}', agentMode) + '\n' + (PROMPT_MAP[agentMode] || ''),
       tools: {
         list_files: tool({
           description: '列出当前剧本项目的代码和文件夹。',
@@ -65,16 +162,12 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ directory = '/' }: { directory?: string }) => {
-            const { data, error } = await supabase
-              .from('files')
-              .select('path, type, name')
-              .eq('script_id', script_id);
+            const files = db.getFilesByScript(scriptId, true);
 
-            if (error) return `Error listing files: ${error.message}`;
-            if (!data || data.length === 0) return 'No files found in this script.';
+            if (files.length === 0) return 'No files found in this script.';
 
             const cleanDir = directory.endsWith('/') ? directory : directory + '/';
-            const filtered = data.filter(f => {
+            const filtered = files.filter(f => {
               if (directory === '/') {
                 const relative = f.path.startsWith('/') ? f.path.substring(1) : f.path;
                 return !relative.includes('/');
@@ -94,15 +187,9 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ path }: { path: string }) => {
-            const { data, error } = await supabase
-              .from('files')
-              .select('content')
-              .eq('script_id', script_id)
-              .eq('path', path)
-              .single();
-
-            if (error) return `Error reading file: ${error.message}`;
-            return data?.content || '(空文件)';
+            const file = db.getFileByPath(scriptId, path);
+            if (!file) return `Error reading file: File not found`;
+            return file.content || '(空文件)';
           },
         }),
         propose_file_edit: tool({
@@ -113,14 +200,12 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ path, new_content }: { path: string, new_content: string }) => {
-            const { error } = await supabase
-              .from('files')
-              .update({ pending_content: new_content })
-              .eq('script_id', script_id)
-              .eq('path', path);
-
-            if (error) return `Error proposing edit: ${error.message}`;
-            return `已提交对 ${path} 的修改建议。用户将在界面上看到差异对比并决定是否应用。`;
+            try {
+              db.updateFilePendingContent(scriptId, path, new_content);
+              return `已提交对 ${path} 的修改建议。用户将在界面上看到差异对比并决定是否应用。`;
+            } catch (e: any) {
+              return `Error proposing edit: ${e.message}`;
+            }
           },
         }),
         create_file: tool({
@@ -131,19 +216,13 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ path, content = '' }: { path: string, content?: string }) => {
-            const name = path.split('/').pop() || 'file';
-            const { error } = await supabase
-              .from('files')
-              .upsert({
-                script_id: script_id,
-                path,
-                name,
-                type: 'file',
-                content
-              });
-
-            if (error) return `Error creating file: ${error.message}`;
-            return `成功创建文件: ${path}`;
+            try {
+              const name = path.split('/').pop() || 'file';
+              db.createFile(scriptId, path, name, 'file', content, true);
+              return `成功创建文件: ${path}`;
+            } catch (e: any) {
+              return `Error creating file: ${e.message}`;
+            }
           },
         }),
         create_folder: tool({
@@ -153,18 +232,13 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ path }: { path: string }) => {
-            const name = path.split('/').pop() || 'folder';
-            const { error } = await supabase
-              .from('files')
-              .insert({
-                script_id: script_id,
-                path,
-                name,
-                type: 'folder'
-              });
-
-            if (error) return `Error creating folder: ${error.message}`;
-            return `成功创建文件夹: ${path}`;
+            try {
+              const name = path.split('/').pop() || 'folder';
+              db.createFile(scriptId, path, name, 'folder', undefined, true);
+              return `成功创建文件夹: ${path}`;
+            } catch (e: any) {
+              return `Error creating folder: ${e.message}`;
+            }
           },
         }),
         read_skills: tool({
@@ -175,8 +249,6 @@ export async function POST(req: Request) {
           // @ts-ignore
           execute: async ({ skill_name }: { skill_name?: string }) => {
             try {
-              const fs = require('fs');
-              const path = require('path');
               const skillsDir = path.join(process.cwd(), 'skills');
 
               if (!fs.existsSync(skillsDir)) return '技能目录不存在。';
@@ -191,7 +263,6 @@ export async function POST(req: Request) {
                 const files = fs.readdirSync(skillsDir).filter((f: string) => f.endsWith('.md'));
                 const summaries = files.map((f: string) => {
                   const content = fs.readFileSync(path.join(skillsDir, f), 'utf8');
-                  // 提取 Frontmatter (--- ... ---)
                   const match = content.match(/^---\n([\s\S]*?)\n---/);
                   const metadata = match ? match[1] : 'No metadata found';
                   return `文件名: ${f.replace('.md', '')}\n元数据:\n${metadata}\n---`;
@@ -210,66 +281,88 @@ export async function POST(req: Request) {
           }),
           // @ts-ignore
           execute: async ({ query }: { query: string }) => {
-            const { data, error } = await supabase
-              .from('files')
-              .select('path, type')
-              .eq('script_id', script_id)
-              .or(`path.ilike.%${query}%,content.ilike.%${query}%`);
-
-            if (error) return `Error searching files: ${error.message}`;
-            if (!data || data.length === 0) return '未找到匹配的文件。';
-
-            return data.map(f => `[${f.type.toUpperCase()}] ${f.path}`).join('\n');
+            try {
+              const results = db.searchFiles(scriptId, query);
+              if (results.length === 0) return '未找到匹配的文件。';
+              return results.map(f => `[${f.type.toUpperCase()}] ${f.path}`).join('\n');
+            } catch (e: any) {
+              return `Error searching files: ${e.message}`;
+            }
           },
         })
       },
       stopWhen: stepCountIs(20),
-      onStepFinish: ({ toolCalls }) => {
-        if (toolCalls?.length) {
-          console.log(`--- Step Finished: Called ${toolCalls.length} tools ---`);
-        }
-      }
     });
 
-    // 3. Respond with UI Stream
-    return createAgentUIStreamResponse({
-      agent,
-      uiMessages: messages,
-      // @ts-ignore - Argument has 'messages' property according to linting
-      async onFinish({ messages: streamMessages }) {
-        console.log('--- Agent Loop Finished ---');
-        const lastAssistantMsg = [...streamMessages].reverse().find(m => m.role === 'assistant');
-
-        if (lastAssistantMsg) {
-          const content = (lastAssistantMsg as any).content || '';
-          const toolCalls = (lastAssistantMsg as any).toolCalls || [];
-
-          console.log('Final text length:', content.length);
-
-          const { error: insertError } = await supabase.from('messages').insert({
-            conversation_id,
-            role: 'assistant',
-            content: content,
-            metadata: {
-              agent_mode,
-              tool_calls: toolCalls,
-            },
+    // 创建流式响应
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const response = await createAgentUIStreamResponse({
+            agent,
+            uiMessages: messages,
           });
 
-          if (insertError) {
-            console.error('Error saving message:', insertError);
-          } else {
-            console.log('Assistant message saved.');
+          const reader = response.body?.getReader();
+          if (!reader) {
+            throw new Error('Failed to get reader from response');
           }
+
+          const decoder = new TextDecoder();
+          let currentText = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            currentText += chunk;
+
+          // 将 chunk 写入 Buffer
+          conversationBuffer.writeChunk(conversationId, chunk);
+          }
+
+          // 标记消息完成
+          conversationBuffer.markMessageFinished(conversationId);
+
+          // 标记 Agent 完成
+          conversationBuffer.markAgentFinished(conversationId);
+
+          // 保存最终消息到数据库
+          if (currentText) {
+            db.createMessage(conversationId, 'assistant', currentText, {
+              type: 'normal',
+              agent_mode: agentMode,
+            });
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error('[Agent Task] Error:', error);
+          conversationBuffer.markAgentError(
+            conversationId,
+            error instanceof Error ? error.message : 'Unknown error'
+          );
+          controller.error(error);
         }
       },
     });
 
+    // 开始读取流（触发执行）
+    const reader = stream.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
   } catch (error: any) {
-    console.error('Chat API Error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal Server Error' },
-      { status: 500 }
+    console.error('[Agent Task] Fatal error:', error);
+    conversationBuffer.markAgentError(
+      conversationId,
+      error.message || 'Fatal error'
     );
   }
+
+  console.log(`[Agent Task] Finished for conversation ${conversationId}`);
 }

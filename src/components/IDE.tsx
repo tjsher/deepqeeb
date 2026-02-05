@@ -6,7 +6,6 @@ import ChatPanel from './ChatPanel';
 import FileEditor from './FileEditor';
 import ConversationList from './ConversationList';
 import GamePreview from './GamePreview';
-import { createClient } from '@/lib/supabase';
 import type { Conversation } from '@/types/database';
 
 interface IDEProps {
@@ -28,8 +27,6 @@ export default function IDE({ userId, scriptId }: IDEProps) {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
 
-  const supabase = createClient();
-
   // 加载当前对话信息
   useEffect(() => {
     if (!activeConversationId) {
@@ -38,13 +35,14 @@ export default function IDE({ userId, scriptId }: IDEProps) {
     }
 
     const loadConversation = async () => {
-      const { data } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('id', activeConversationId)
-        .single();
-
-      setActiveConversation(data);
+      try {
+        const res = await fetch(`/api/conversations/${activeConversationId}`);
+        if (!res.ok) throw new Error('Failed to load conversation');
+        const data = await res.json();
+        setActiveConversation(data);
+      } catch (error) {
+        console.error('加载对话失败:', error);
+      }
     };
 
     loadConversation();
@@ -96,6 +94,14 @@ export default function IDE({ userId, scriptId }: IDEProps) {
   // 创建新对话
   const handleNewConversation = () => {
     console.log('创建新对话');
+  };
+
+  // 删除对话
+  const handleDeleteConversation = (id: string) => {
+    if (activeConversationId === id) {
+      setActiveConversationId(null);
+      setActiveConversation(null);
+    }
   };
 
   // Check if current conversation includes game elements (simplified logic for now)
@@ -183,6 +189,7 @@ export default function IDE({ userId, scriptId }: IDEProps) {
                   activeConversationId={activeConversationId}
                   onSelectConversation={setActiveConversationId}
                   onNewConversation={handleNewConversation}
+                  onDeleteConversation={handleDeleteConversation}
                 />
               </div>
             </div>

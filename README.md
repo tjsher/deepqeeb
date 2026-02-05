@@ -25,7 +25,7 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000) 访问。
+打开 [http://localhost:3001](http://localhost:3001) 访问。
 
 ## 部署到 Vercel
 

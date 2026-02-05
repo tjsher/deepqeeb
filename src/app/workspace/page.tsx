@@ -1,16 +1,18 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import IDE from '@/components/IDE';
 
 export default async function WorkspacePage() {
-  const cookieStore = await cookies();
-  const hasSession = cookieStore.get('sb-access-token') ||
-    cookieStore.get('supabase-auth-token') ||
-    cookieStore.get('sb-crlfeaprmayjsthhxbze-auth-token');
+  // SQLite 版本简化处理
+  const mockUser = {
+    id: 'mock-user-001',
+    email: 'dev@example.com'
+  };
 
-  if (!hasSession) {
-    redirect('/login');
-  }
+  // 使用一个默认脚本 ID
+  const defaultScriptId = 'default-script';
 
-  // 统一重定向到新的仪表盘页面
-  redirect('/dashboard');
+  return (
+    <div className="h-screen">
+      <IDE userId={mockUser.id} scriptId={defaultScriptId} />
+    </div>
+  );
 }
